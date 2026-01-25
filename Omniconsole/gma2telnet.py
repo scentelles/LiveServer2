@@ -12,8 +12,8 @@ class GrandMA2Telnet:
         self.port = port
         self.timeout = timeout
         self.socket = None
-        self.user = "toto"
-        self.password = "toto"
+        self.user = user
+        self.password = password
         self.executorList = ""
         self.execIdToName = {}
         
