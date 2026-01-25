@@ -6,6 +6,7 @@ from gma2telnet import *
 import threading
 import functools
 
+MAX_EXEC_PAGE = 2
 
 #0xf0:0x7f:0x7f:0x2:0x7f:0xa:0x30:0x2e:0x30:0x30:0x30:0x0:0x31:0x2e:0x31:0xf7:
 #F0     7F	7F	02	7F	Command	Data	F7
@@ -69,9 +70,9 @@ messagepgup = False
 messagepgdown = False
 currentFaderPage = 1
 
-tilt = 0
-pan = 0
+
 gobo = 0
+prism = 0
 class Omniconsole:
     def __init__(self):
         """ Initialise la connexion midi a xtouch """
@@ -82,7 +83,7 @@ class Omniconsole:
         #XTOUCH Feedback sender
         #https://github.com/NicoG60/TouchMCU/blob/main/doc/mackie_control_protocol.md
         self.midi_out = rtmidi2.MidiOut()
-        self.midi_out.open_port("PC_Salon*")
+        self.midi_out.open_port("OMNICONSOLE*")
 
         #STREAM DECK Feedback sender
         self.midi_out_SD = rtmidi2.MidiOut()
@@ -90,7 +91,7 @@ class Omniconsole:
              
         #XTOUCH Receiver
         self.midiReceiveXtouch = rtmidi2.MidiIn()
-        self.midiReceiveXtouch.open_port("PC_Salon*")
+        self.midiReceiveXtouch.open_port("OMNICONSOLE*")
         self.midiReceiveXtouch.callback = self.midi_callback_xtouch
 
         #STREAM DECK Receiver
@@ -121,7 +122,7 @@ class Omniconsole:
     def midi_callback_xtouch(self, message, data=None):
         global FaderUpdateReceived, currentFaderValueList, currentFaderLSBList, currentFaderMSBList, FaderUpdateReceivedList, currentFaderPage
         global gma2
-        global pan, tilt, gobo
+        global gobo, prism
 
         print("Message MIDI reçu :", self.port_name, ":", message)
         midiCommand = message[0] & 0xF0
@@ -154,13 +155,37 @@ class Omniconsole:
                     self.midi_out.send_raw(*message)
             elif(note < 24):
                 if(value > 0):
-                    gma2.send_command("Flash On " + str(currentFaderPage) + "." + str(note-16+1)) 
+                    gma2.send_command("TStrbemp " + str(currentFaderPage) + "." + str(note-16+1)) 
                 if(value == 0):
                     gma2.send_command("Flash Off " + str(currentFaderPage) + "." + str(note-16+1))                     
             elif(note < 32):
                 if(value > 0):
                     gma2.send_command("On " + str(currentFaderPage) + ".10" + str(note-24+1)) 
+                if(value == 0):
+                    gma2.send_command("Off " + str(currentFaderPage) + ".10" + str(note-24+1)) 
+            elif(note < 40): #Rotary push
+                if(value > 0):
+                    gma2.send_command("clear")
+                    if (note==32):
+                        gma2.send_command("Fixture 101 thru 199") 
+                    if (note==33):
+                        gma2.send_command("Group 15")
+                    if (note==34):
+                        gma2.send_command("Group 8")
+                    if (note==35):
+                        gma2.send_command("Group 2")
+                    if (note==36):
+                        gma2.send_command("Group 10")
+                    if (note==37):
+                        gma2.send_command("Fixture 380 thru 381")
+                    if (note==38):
+                        gma2.send_command("Group 1")
+                    if (note==39):
+                        gma2.send_command("Fixture 1")#nothing for now
 
+
+
+                        
         if(midiCommand == MIDI_CC):
             control = message[1]  
             value   = message[2]    
@@ -168,25 +193,50 @@ class Omniconsole:
             
             if(control == 16):
                 if(value < 64):
-                    pan += value
+                    gma2.send_command("Attribute \"Pan\" At ++" + str(value))   
                 else:
-                    pan -= (value-64)
-                gma2.send_command("Attribute \"Pan\" At " + str(pan))             
+                    gma2.send_command("Attribute \"Pan\" At --" + str(value-64))             
 
             if(control == 17):
                 if(value < 64):
-                    tilt += value
+                    gma2.send_command("Attribute \"Tilt\" At ++" + str(value)) 
                 else:
-                    tilt -= (value-64)
-                gma2.send_command("Attribute \"Tilt\" At " + str(tilt)) 
+                    gma2.send_command("Attribute \"Tilt\" At --" + str(value-64))    
 
+
+
+            if(control == 20):
+                if(value < 64):
+                    gma2.send_command("Attribute \"ZOOM\" At ++" + str(value))
+                else:
+                    gma2.send_command("Attribute \"ZOOM\" At --" + str(value-64)) 
+                
             if(control == 22):
                 if(value < 64):
-                    gobo += value
+                    if (gobo < 100):
+                        gobo += value
                 else:
-                    gobo -= (value-64)
+                    if (gobo > 0):
+                        gobo -= (value-64)
+                gma2.send_command("clear") 
+                gma2.send_command("fixture 301 thru 306")                 
                 gma2.send_command("Attribute \"GOBO1\" At " + str(gobo)) 
-        
+
+            if(control == 23):
+                if(value < 64):
+                    if (prism < 100):
+                        prism += value
+                else:
+                    if (prism > 0):
+                        prism -= (value-64)
+                        
+                if(prism < 40):
+                    prism = 40  #below 40, no prism
+                gma2.send_command("clear") 
+                gma2.send_command("fixture 301 thru 306")       
+                gma2.send_command("Attribute \"PRISMA1\" At " + str(prism))
+          
+                
     def midi_callback_streamdeck(self, message, data=None):
         global messagepgup, messagepgdown
         print("STREAMDECK Message MIDI reçu :", self.port_name, ":", message)
@@ -205,7 +255,7 @@ class Omniconsole:
 if __name__ == "__main__":
     
     #global FaderUpdateReceivedList, currentFaderValueList
-
+   # global MAX_EXEC_PAGE
     
     myConsole = Omniconsole()
     # Connexion en tant qu'Administrateur sans mot de passe
@@ -222,7 +272,7 @@ if __name__ == "__main__":
     for i in range(8):
         message = [224+i, 0, 0]  
         myConsole.midi_out.send_raw(*message)
-        time.sleep(0.005)    
+        time.sleep(0.02)    
 
     #init pagenb to stream deck
     message = [0xB0, 127, 1]
@@ -237,7 +287,10 @@ if __name__ == "__main__":
         
             if (messagepgup == True):
                 messagepgup = False
-                currentFaderPage += 1
+                if(currentFaderPage < MAX_EXEC_PAGE):
+                    currentFaderPage += 1
+                else:
+                    continue
                 message = [0xB0, 127, currentFaderPage]
                 myConsole.midi_out_SD.send_raw(*message)
                 
@@ -254,12 +307,15 @@ if __name__ == "__main__":
                     #print("MSB = " + str(MSB))
                     message = [224+i, 0, MSB]  
                     myConsole.midi_out.send_raw(*message)
-                    time.sleep(0.1)
+                    #time.sleep(0.1)
                 
 
             if (messagepgdown == True):
                 messagepgdown = False
-                currentFaderPage -= 1
+                if(currentFaderPage > 1):
+                    currentFaderPage -= 1
+                else:
+                    continue
                 message = [0xB0, 127, currentFaderPage]
                 myConsole.midi_out_SD.send_raw(*message)
                 print("Updating exec page")
@@ -274,7 +330,7 @@ if __name__ == "__main__":
                     #print("MSB = " + str(MSB))
                     message = [224+i, 0, MSB]  
                     myConsole.midi_out.send_raw(*message)
-                    time.sleep(0.1)
+                    #time.sleep(0.1)
 
  
             for i in range(8):
@@ -291,7 +347,7 @@ if __name__ == "__main__":
                    
 
         
-        
+            time.sleep(0.02)
             pass  # Boucle infinie pour continuer à écouter
     except KeyboardInterrupt:
         print("\nArrêt du programme...")
