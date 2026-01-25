@@ -1,3 +1,4 @@
+import argparse
 import rtmidi2
 import rtmidi
 from gma2telnet import *
@@ -257,9 +258,23 @@ if __name__ == "__main__":
     #global FaderUpdateReceivedList, currentFaderValueList
    # global MAX_EXEC_PAGE
     
+    parser = argparse.ArgumentParser(
+        description="Omniconsole MIDI controller for GrandMA2 via telnet."
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="GrandMA2 host.")
+    parser.add_argument("--port", type=int, default=30000, help="GrandMA2 telnet port.")
+    parser.add_argument("--user", default="Administrator", help="GrandMA2 user.")
+    parser.add_argument("--password", default=None, help="GrandMA2 password.")
+    args = parser.parse_args()
+
     myConsole = Omniconsole()
     # Connexion en tant qu'Administrateur sans mot de passe
-    gma2 = GrandMA2Telnet(host="127.0.0.1")
+    gma2 = GrandMA2Telnet(
+        host=args.host,
+        port=args.port,
+        user=args.user,
+        password=args.password,
+    )
     gma2.connect()
 
     gma2.send_command("FaderPage 1")
