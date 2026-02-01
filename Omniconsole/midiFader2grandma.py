@@ -8,8 +8,8 @@ from gma2telnet import GrandMA2Telnet
 
 MIDI_CC_STATUS = 0xB0
 DEFAULT_MIDI_PORT_MATCH = "Arduino Leonardo"
-DEFAULT_CC = 7
-DEFAULT_EXECUTOR = "1.15"
+DEFAULT_CCS = "7,8"
+DEFAULT_EXECUTORS = "1.15,1.16"
 DEFAULT_USER = "Administrator"
 
 
@@ -27,8 +27,35 @@ def open_midi_input(port_match):
     raise SystemExit(f'MIDI input port not found: "{port_match}"')
 
 
-def build_cc_callback(gma2, executor, cc_number, verbose):
-    last_value = {"value": None}
+def parse_cc_list(raw_value):
+    items = [item.strip() for item in raw_value.split(",") if item.strip()]
+    if not items:
+        raise SystemExit("CC list cannot be empty.")
+
+    try:
+        ccs = [int(item) for item in items]
+    except ValueError:
+        raise SystemExit(f'Invalid CC list: "{raw_value}".')
+
+    for cc in ccs:
+        if cc < 0 or cc > 127:
+            raise SystemExit(f"CC out of range (0-127): {cc}")
+
+    if len(set(ccs)) != len(ccs):
+        raise SystemExit("Duplicate CC entries are not allowed.")
+
+    return ccs
+
+
+def parse_executor_list(raw_value):
+    items = [item.strip() for item in raw_value.split(",") if item.strip()]
+    if not items:
+        raise SystemExit("Executor list cannot be empty.")
+    return items
+
+
+def build_cc_callback(gma2, cc_to_executor, verbose):
+    last_values = {cc: None for cc in cc_to_executor}
 
     def _callback(event, data=None):
         message, _delta_time = event
@@ -41,14 +68,15 @@ def build_cc_callback(gma2, executor, cc_number, verbose):
 
         control = message[1]
         value = message[2]
-        if control != cc_number:
+        executor = cc_to_executor.get(control)
+        if executor is None:
             return
 
         percent = int(round(value * 100 / 127))
-        if percent == last_value["value"]:
+        if percent == last_values[control]:
             return
 
-        last_value["value"] = percent
+        last_values[control] = percent
         gma2.send_command(f"Fader {executor} At {percent}")
         if verbose:
             print(f"CC{control}={value} -> Fader {executor} At {percent}")
@@ -58,7 +86,7 @@ def build_cc_callback(gma2, executor, cc_number, verbose):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Listen to Arduino CC7 and drive a GrandMA2 executor via telnet."
+        description="Listen to Arduino CCs and drive GrandMA2 executors via telnet."
     )
     parser.add_argument(
         "--midi-port",
@@ -67,12 +95,16 @@ def main():
     )
     parser.add_argument(
         "--executor",
-        default=DEFAULT_EXECUTOR,
-        help='Executor identifier (example: "1.1").',
+        default=DEFAULT_EXECUTORS,
+        help='Comma-separated executor list (example: "1.1,1.2").',
     )
     parser.add_argument("--user", default=DEFAULT_USER, help="GrandMA2 user.")
     parser.add_argument("--password", default=None, help="GrandMA2 password.")
-    parser.add_argument("--cc", type=int, default=DEFAULT_CC, help="CC number.")
+    parser.add_argument(
+        "--cc",
+        default=DEFAULT_CCS,
+        help='Comma-separated CC list (example: "7,8").',
+    )
     parser.add_argument("--host", default="127.0.0.1", help="GrandMA2 host.")
     parser.add_argument("--port", type=int, default=30000, help="GrandMA2 telnet port.")
     parser.add_argument("--verbose", action="store_true")
@@ -87,14 +119,23 @@ def main():
     )
     gma2.connect()
 
+    ccs = parse_cc_list(args.cc)
+    executors = parse_executor_list(args.executor)
+    if len(ccs) != len(executors):
+        raise SystemExit("Number of CCs must match number of executors.")
+
+    cc_pairs = list(zip(ccs, executors))
+    cc_to_executor = {cc: executor for cc, executor in cc_pairs}
+
     midi_in, port_name = open_midi_input(args.midi_port)
-    midi_in.set_callback(build_cc_callback(gma2, args.executor, args.cc, args.verbose))
+    midi_in.set_callback(build_cc_callback(gma2, cc_to_executor, args.verbose))
     try:
         midi_in.ignore_types(sysex=False, timing=False, active_sense=False)
     except TypeError:
         midi_in.ignore_types(sysex=False, timing=False)
 
-    print(f'Listening on "{port_name}" for CC{args.cc} -> executor {args.executor}.')
+    mapping_label = ", ".join(f"CC{cc} -> {executor}" for cc, executor in cc_pairs)
+    print(f'Listening on "{port_name}" for {mapping_label}.')
     try:
         while True:
             time.sleep(0.1)
