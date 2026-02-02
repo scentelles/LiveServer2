@@ -16,10 +16,21 @@ MIDI_CC = 0xB0
 DEFAULT_IN_PORT_MATCH = "Springbeats vMIDI7"
 DEFAULT_OUT_PORT_MATCH = "Springbeats vMIDI8"
 SCRIBBLE_SYSEX_PREFIX = [0xF0, 0x00, 0x00, 0x66, 0x15, 0x12]
+SCRIBBLE_COLOR_SYSEX_PREFIX = [0xF0, 0x00, 0x00, 0x66, 0x15, 0x14]
 SCRIBBLE_LEN = 7
 LED_OFF_COLOR = "#2b2b2b"
 LED_ON_COLOR = "#2ecc71"
 TRACE = False
+SCRIBBLE_COLOR_MAP = {
+    0: "#1f1f1f",
+    1: "#c0392b",
+    2: "#27ae60",
+    3: "#f1c40f",
+    4: "#2980b9",
+    5: "#8e44ad",
+    6: "#16a085",
+    7: "#ecf0f1",
+}
 
 def _select_port_index(ports, port_match):
     if not port_match:
@@ -194,6 +205,21 @@ def parse_scribble_message(message):
     return index, row, label
 
 
+def parse_scribble_color_message(message):
+    if len(message) < len(SCRIBBLE_COLOR_SYSEX_PREFIX) + 2 + 1:
+        return None
+    if message[: len(SCRIBBLE_COLOR_SYSEX_PREFIX)] != SCRIBBLE_COLOR_SYSEX_PREFIX:
+        return None
+    index_value = message[6]
+    color = message[7]
+    index = index_value
+    if index_value > 7 and index_value % 7 == 0:
+        index = index_value // 7
+    if index < 0 or index > 7:
+        return None
+    return index, color
+
+
 def run_cli(midi_out, midi_in, demo_delay):
     print_help()
     try:
@@ -267,8 +293,11 @@ def run_gui(midi_out, midi_in):
     knob_value_vars = {}
     knob_value_cache = {}
 
-    scribble_bg = "#1f1f1f"
+    scribble_bg = SCRIBBLE_COLOR_MAP.get(0, "#1f1f1f")
     scribble_fg = "#f0f0f0"
+    scribble_frames = []
+    scribble_labels_top = []
+    scribble_labels_bottom = []
 
     main_frame = ttk.Frame(root, padding=10)
     main_frame.pack(fill="both", expand=True)
@@ -434,6 +463,9 @@ def run_gui(midi_out, midi_in):
             pady=2,
         )
         scribble_bottom.pack(side="top", fill="x")
+        scribble_frames.append(scribble_frame)
+        scribble_labels_top.append(scribble_top)
+        scribble_labels_bottom.append(scribble_bottom)
         button_column = ttk.Frame(column, padding=(4, 0))
         button_column.pack(side="top", fill="y", expand=False)
         _add_button(button_column, idx + 0, f"OFF {idx+1}")
@@ -490,6 +522,14 @@ def run_gui(midi_out, midi_in):
         else:
             widget.configure(bg=LED_ON_COLOR if led_on else LED_OFF_COLOR)
 
+    def update_scribble_color(index, color_index):
+        if index < 0 or index >= len(scribble_frames):
+            return
+        color = SCRIBBLE_COLOR_MAP.get(color_index, scribble_bg)
+        scribble_frames[index].configure(bg=color)
+        scribble_labels_top[index].configure(bg=color)
+        scribble_labels_bottom[index].configure(bg=color)
+
     def update_gui():
         while True:
             try:
@@ -505,6 +545,11 @@ def run_gui(midi_out, midi_in):
                 continue
 
             if message[0] == 0xF0:
+                parsed_color = parse_scribble_color_message(message)
+                if parsed_color:
+                    index, color_index = parsed_color
+                    update_scribble_color(index, color_index)
+                    continue
                 parsed = parse_scribble_message(message)
                 if parsed:
                     index, row, label = parsed
