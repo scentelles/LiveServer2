@@ -652,7 +652,7 @@ if __name__ == "__main__":
                 
                 #print("Updating exec page")
                 gma2.send_command("FaderPage " + str(page))
-                #time.sleep(0.4)
+                time.sleep(0.1)
                 
                 gma2.updateFaderLabels(myConsole, page)
                 
@@ -661,7 +661,7 @@ if __name__ == "__main__":
                     MSB = (int (currentFaderValueList[page-1][i])*16383/100)/128
                     #print("MSB = " + str(MSB))
                     myConsole._send_xtouch_fader(i, 0, int(MSB), update_flash=False, update_on_off=False)
-                    #time.sleep(0.1)
+                    time.sleep(0.01)
                 myConsole.apply_on_off_leds_for_current_page()
                 myConsole.apply_flash_leds_for_current_page()
 
