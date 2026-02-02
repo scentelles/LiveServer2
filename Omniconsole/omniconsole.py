@@ -687,7 +687,10 @@ if __name__ == "__main__":
                     FaderUpdateReceivedList[i] = None
                     print("sending msg now!")
                     current_value = (currentFaderMSBList[i] << 7) | currentFaderLSBList[i]
-                    myConsole._update_flash_from_value(i, current_value, page_index=update_page_index)
+                    if update_page_index == (currentFaderPage - 1):
+                        myConsole._update_flash_from_value(
+                            i, current_value, page_index=update_page_index
+                        )
                     gma2.send_command(
                         "Fader "
                         + str(update_page_index + 1)
