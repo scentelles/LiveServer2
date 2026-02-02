@@ -114,6 +114,9 @@ class Omniconsole:
         self.flash_requires_zero = [
             [False] * 8 for _ in range(len(currentFaderValueList))
         ]
+        self.on_off_state = [
+            [None] * 8 for _ in range(len(currentFaderValueList))
+        ]
 
         xtouch_in_port = TEST_XTOUCH_IN_PORT if test_mode else "OMNICONSOLE*"
         xtouch_out_port = TEST_XTOUCH_OUT_PORT if test_mode else "OMNICONSOLE*"
@@ -161,6 +164,54 @@ class Omniconsole:
         message = [MIDI_NOTE, 16 + faderId, value]
         self.midi_out.send_raw(*message)
 
+    def _send_xtouch_led(self, note, on):
+        value = 127 if on else 0
+        message = [MIDI_NOTE, note, value]
+        self.midi_out.send_raw(*message)
+
+    def _set_on_off_leds(self, faderId, state, page_index=None):
+        if page_index is None:
+            page_index = self._current_page_index()
+
+        if state is None:
+            self.on_off_state[page_index][faderId] = None
+            self._send_xtouch_led(faderId, False)
+            self._send_xtouch_led(8 + faderId, False)
+            return
+
+        if state == "on":
+            self.on_off_state[page_index][faderId] = "on"
+            self._send_xtouch_led(faderId, False)
+            self._send_xtouch_led(8 + faderId, True)
+            return
+
+        if state == "off":
+            self.on_off_state[page_index][faderId] = "off"
+            self._send_xtouch_led(faderId, True)
+            self._send_xtouch_led(8 + faderId, False)
+
+    def _update_on_off_from_value(self, faderId, value):
+        page_index = self._current_page_index()
+        if value <= 0:
+            self._set_on_off_leds(faderId, None, page_index)
+            return
+        state = self.on_off_state[page_index][faderId]
+        if state:
+            self._set_on_off_leds(faderId, state, page_index)
+
+    def apply_on_off_leds_for_current_page(self):
+        page_index = self._current_page_index()
+        for faderId in range(8):
+            value = currentFaderValueList[page_index][faderId]
+            if value <= 0:
+                self._set_on_off_leds(faderId, None, page_index)
+            else:
+                state = self.on_off_state[page_index][faderId]
+                if state:
+                    self._set_on_off_leds(faderId, state, page_index)
+                else:
+                    self._set_on_off_leds(faderId, None, page_index)
+
     def _update_flash_from_value(self, faderId, value):
         page_index = self._current_page_index()
         if self.flash_requires_zero[page_index][faderId]:
@@ -173,7 +224,9 @@ class Omniconsole:
     def _send_xtouch_fader(self, faderId, lsb, msb):
         message = [MIDI_PITCH_BEND + faderId, lsb, msb]
         self.midi_out.send_raw(*message)
-        self._update_flash_from_value(faderId, (msb << 7) | lsb)
+        value = (msb << 7) | lsb
+        self._update_flash_from_value(faderId, value)
+        self._update_on_off_from_value(faderId, value)
         
     def ack_fader_midi_message(self, faderId):
         global currentFaderLSBList, currentFaderMSBList , active_timer
@@ -205,6 +258,8 @@ class Omniconsole:
             currentFaderLSBList[changedFader] = message[1]
             currentFaderMSBList[changedFader] = message[2]
             FaderUpdateReceivedList[changedFader] = 1
+            if value <= 0:
+                self._set_on_off_leds(changedFader, None)
 
         if(midiCommand == MIDI_NOTE):        
             note = message[1]
@@ -218,11 +273,11 @@ class Omniconsole:
                     if current_value <= 0:
                         self.flash_requires_zero[page_index][note] = False
                     self._send_xtouch_flash(note, False)
+                    self._set_on_off_leds(note, "off")
             elif(note < 16):
                 if(value > 0):
                     gma2.send_command("On " + str(currentFaderPage) + "." + str(note-8+1)) 
-                    message = [MIDI_NOTE, 16+note-8, 127]
-                    self.midi_out.send_raw(*message)
+                    self._set_on_off_leds(note - 8, "on")
             elif(note < 24):
                 if(value > 0):
                     gma2.send_command("TStrbemp " + str(currentFaderPage) + "." + str(note-16+1)) 
@@ -368,6 +423,7 @@ if __name__ == "__main__":
     for i in range(8):
         myConsole._send_xtouch_fader(i, 0, 0)
         time.sleep(0.02)    
+    myConsole.apply_on_off_leds_for_current_page()
 
     #init pagenb to stream deck
     message = [0xB0, 127, 1]
@@ -426,6 +482,7 @@ if __name__ == "__main__":
                     #print("MSB = " + str(MSB))
                     myConsole._send_xtouch_fader(i, 0, int(MSB))
                     #time.sleep(0.1)
+                myConsole.apply_on_off_leds_for_current_page()
                 
 
             if (messagepgdown == True):
@@ -448,6 +505,7 @@ if __name__ == "__main__":
                     #print("MSB = " + str(MSB))
                     myConsole._send_xtouch_fader(i, 0, int(MSB))
                     #time.sleep(0.1)
+                myConsole.apply_on_off_leds_for_current_page()
 
  
             for i in range(8):
