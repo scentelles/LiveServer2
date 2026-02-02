@@ -28,7 +28,8 @@ MIDI_CC = 0xB0
 TEST_XTOUCH_IN_PORT = "Springbeats vMIDI8"
 TEST_XTOUCH_OUT_PORT = "Springbeats vMIDI7"
 SCRIBBLE_COLOR_SYSEX_CMD = 0x14
-SCRIBBLE_COLOR_USES_OFFSET = False
+# "index" uses 0..7, "offset" uses 0,7,14,...,49, "both" sends both forms.
+SCRIBBLE_COLOR_MODE = "both"
 SCRIBBLE_COLORS = [4] * 8
 
 def _open_rtmidi2_port(midi_obj, port_match, direction_label):
@@ -94,7 +95,7 @@ gma2_in.callback = gma2_in_callback
 currentFaderValueList = [[0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0]]
 currentFaderLSBList = [0,0,0,0,0,0,0,0]
 currentFaderMSBList = [0,0,0,0,0,0,0,0]
-FaderUpdateReceivedList = [0,0,0,0,0,0,0,0]
+FaderUpdateReceivedList = [None, None, None, None, None, None, None, None]
 
 currentMessage = 0
 active_timer_list = [None, None, None, None, None, None, None, None]
@@ -175,9 +176,37 @@ class Omniconsole:
     def sendXtouchScribbleColor(self, faderId, color):
         if color is None:
             return
-        index_value = faderId * 7 if SCRIBBLE_COLOR_USES_OFFSET else faderId
-        message = [0xF0, 0x00, 0x00, 0x66, 0x15, SCRIBBLE_COLOR_SYSEX_CMD, index_value, int(color) & 0x7F, 0xF7]
-        self.midi_out.send_raw(*message)
+        mode = SCRIBBLE_COLOR_MODE
+        if mode not in ("index", "offset", "both"):
+            mode = "index"
+        index_value = faderId
+        offset_value = faderId * 7
+        if mode in ("index", "both"):
+            message = [
+                0xF0,
+                0x00,
+                0x00,
+                0x66,
+                0x15,
+                SCRIBBLE_COLOR_SYSEX_CMD,
+                index_value,
+                int(color) & 0x7F,
+                0xF7,
+            ]
+            self.midi_out.send_raw(*message)
+        if mode in ("offset", "both"):
+            message = [
+                0xF0,
+                0x00,
+                0x00,
+                0x66,
+                0x15,
+                SCRIBBLE_COLOR_SYSEX_CMD,
+                offset_value,
+                int(color) & 0x7F,
+                0xF7,
+            ]
+            self.midi_out.send_raw(*message)
 
     def _current_page_index(self):
         page_index = currentFaderPage - 1
@@ -230,8 +259,14 @@ class Omniconsole:
             self._send_xtouch_led(8 + faderId, True)
             self._send_xtouch_flash(faderId, True)
 
-    def _update_on_off_from_value(self, faderId, value):
-        page_index = self._current_page_index()
+    def _update_on_off_from_value(self, faderId, value, page_index=None):
+        if page_index is None:
+            page_index = self._current_page_index()
+        else:
+            if page_index < 0:
+                page_index = 0
+            if page_index >= len(self.flash_requires_zero):
+                page_index = len(self.flash_requires_zero) - 1
         if value <= 0:
             if self.on_off_state[page_index][faderId] == "off":
                 self.on_off_state[page_index][faderId] = None
@@ -276,8 +311,14 @@ class Omniconsole:
                 self._send_xtouch_led(faderId, False)
                 self._send_xtouch_led(8 + faderId, False)
 
-    def _update_flash_from_value(self, faderId, value):
-        page_index = self._current_page_index()
+    def _update_flash_from_value(self, faderId, value, page_index=None):
+        if page_index is None:
+            page_index = self._current_page_index()
+        else:
+            if page_index < 0:
+                page_index = 0
+            if page_index >= len(self.flash_requires_zero):
+                page_index = len(self.flash_requires_zero) - 1
         if self.flash_zeroed[page_index][faderId]:
             self._send_xtouch_flash(faderId, False)
             return
@@ -338,7 +379,13 @@ class Omniconsole:
 
         """Met a jour le faders après 500 ms"""
         message = [224+faderId, currentFaderLSBList[faderId], currentFaderMSBList[faderId]]  
-        self._send_xtouch_fader(faderId, currentFaderLSBList[faderId], currentFaderMSBList[faderId])
+        self._send_xtouch_fader(
+            faderId,
+            currentFaderLSBList[faderId],
+            currentFaderMSBList[faderId],
+            update_flash=False,
+            update_on_off=False,
+        )
         print("🎹 Message MIDI envoyé :", message)
         
     def midi_callback_xtouch(self, message, data=None):
@@ -363,8 +410,8 @@ class Omniconsole:
             
             currentFaderLSBList[changedFader] = message[1]
             currentFaderMSBList[changedFader] = message[2]
-            FaderUpdateReceivedList[changedFader] = 1
-            self._update_on_off_from_value(changedFader, value)
+            FaderUpdateReceivedList[changedFader] = page_index
+            self._update_on_off_from_value(changedFader, value, page_index=page_index)
             if percentage <= 0 and prev_percentage > 0:
                 self.flash_zeroed[page_index][changedFader] = True
             elif percentage > 0:
@@ -635,12 +682,20 @@ if __name__ == "__main__":
 
  
             for i in range(8):
-                if(FaderUpdateReceivedList[i] == 1):
-                    FaderUpdateReceivedList[i] = 0
+                if(FaderUpdateReceivedList[i] is not None):
+                    update_page_index = FaderUpdateReceivedList[i]
+                    FaderUpdateReceivedList[i] = None
                     print("sending msg now!")
                     current_value = (currentFaderMSBList[i] << 7) | currentFaderLSBList[i]
-                    myConsole._update_flash_from_value(i, current_value)
-                    gma2.send_command("Fader " + str(currentFaderPage) + "." + str(i+1) + " At " + str(currentFaderValueList[currentFaderPage-1][i]))
+                    myConsole._update_flash_from_value(i, current_value, page_index=update_page_index)
+                    gma2.send_command(
+                        "Fader "
+                        + str(update_page_index + 1)
+                        + "."
+                        + str(i + 1)
+                        + " At "
+                        + str(currentFaderValueList[update_page_index][i])
+                    )
                     if (active_timer_list[i] != None) :
                         active_timer_list[i].cancel()
                     active_timer_list[i] = threading.Timer(0.5, functools.partial(myConsole.ack_fader_midi_message, i))
