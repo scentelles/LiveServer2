@@ -7,7 +7,8 @@ from gma2telnet import *
 import threading
 import functools
 
-MAX_EXEC_PAGE = 2
+MAX_EXEC_PAGE = 4
+MAX_BUTTON_PAGE = MAX_EXEC_PAGE
 
 #0xf0:0x7f:0x7f:0x2:0x7f:0xa:0x30:0x2e:0x30:0x30:0x30:0x0:0x31:0x2e:0x31:0xf7:
 #F0     7F	7F	02	7F	Command	Data	F7
@@ -97,7 +98,10 @@ active_timer_list = [None, None, None, None, None, None, None, None]
 
 messagepgup = False
 messagepgdown = False
+messagebtnup = False
+messagebtndown = False
 currentFaderPage = 1
+currentButtonPage = 1
 
 
 gobo = 0
@@ -181,7 +185,8 @@ class Omniconsole:
         print("🎹 Message MIDI envoyé :", message)
         
     def midi_callback_xtouch(self, message, data=None):
-        global FaderUpdateReceived, currentFaderValueList, currentFaderLSBList, currentFaderMSBList, FaderUpdateReceivedList, currentFaderPage
+        global FaderUpdateReceived, currentFaderValueList, currentFaderLSBList, currentFaderMSBList, FaderUpdateReceivedList, currentFaderPage, currentButtonPage
+        global messagebtnup, messagebtndown
         global gma2
         global gobo, prism
 
@@ -225,9 +230,9 @@ class Omniconsole:
                     gma2.send_command("Flash Off " + str(currentFaderPage) + "." + str(note-16+1))                     
             elif(note < 32):
                 if(value > 0):
-                    gma2.send_command("On " + str(currentFaderPage) + ".10" + str(note-24+1)) 
+                    gma2.send_command("On " + str(currentButtonPage) + ".10" + str(note-24+1)) 
                 if(value == 0):
-                    gma2.send_command("Off " + str(currentFaderPage) + ".10" + str(note-24+1)) 
+                    gma2.send_command("Off " + str(currentButtonPage) + ".10" + str(note-24+1)) 
             elif(note < 40): #Rotary push
                 if(value > 0):
                     gma2.send_command("clear")
@@ -254,7 +259,6 @@ class Omniconsole:
         if(midiCommand == MIDI_CC):
             control = message[1]  
             value   = message[2]    
-            
             
             if(control == 16):
                 if(value < 64):
@@ -303,7 +307,7 @@ class Omniconsole:
           
                 
     def midi_callback_streamdeck(self, message, data=None):
-        global messagepgup, messagepgdown
+        global messagepgup, messagepgdown, messagebtnup, messagebtndown
         print("STREAMDECK Message MIDI reçu :", self.port_name, ":", message)
         if(message[1] == 127):
             print ("Page UP")
@@ -311,6 +315,12 @@ class Omniconsole:
         if(message[1] == 126):
             print ("Page DOWN")
             messagepgdown = True        
+        if(message[1] == 117):
+            print ("Button Page UP")
+            messagebtnup = True
+        if(message[1] == 116):
+            print ("Button Page DOWN")
+            messagebtndown = True
 
 
 
@@ -347,8 +357,10 @@ if __name__ == "__main__":
     gma2.connect()
 
     gma2.send_command("FaderPage 1")
+    gma2.send_command("ButtonPage 1")
     time.sleep(0.2)
-    gma2.updateFaderLabels(myConsole)
+    gma2.updateFaderLabels(myConsole, currentFaderPage)
+    gma2.updateButtonLabels(myConsole, currentButtonPage)
     for page in range(4):
         for i in range(8):
             gma2.send_command("Fader " + str(page) + "." + str(i+1) + " At 0")
@@ -368,6 +380,30 @@ if __name__ == "__main__":
         print("En écoute des messages MIDI...")
         while True:
         
+            if (messagebtnup == True):
+                messagebtnup = False
+                if(currentButtonPage < MAX_BUTTON_PAGE):
+                    currentButtonPage += 1
+                else:
+                    continue
+                message = [0xB0, 117, currentButtonPage]
+                myConsole.midi_out_SD.send_raw(*message)
+                gma2.send_command("ButtonPage " + str(currentButtonPage))
+                time.sleep(0.05)
+                gma2.updateButtonLabels(myConsole, currentButtonPage)
+
+            if (messagebtndown == True):
+                messagebtndown = False
+                if(currentButtonPage > 1):
+                    currentButtonPage -= 1
+                else:
+                    continue
+                message = [0xB0, 117, currentButtonPage]
+                myConsole.midi_out_SD.send_raw(*message)
+                gma2.send_command("ButtonPage " + str(currentButtonPage))
+                time.sleep(0.05)
+                gma2.updateButtonLabels(myConsole, currentButtonPage)
+
             if (messagepgup == True):
                 messagepgup = False
                 if(currentFaderPage < MAX_EXEC_PAGE):
@@ -382,7 +418,7 @@ if __name__ == "__main__":
                 gma2.send_command("FaderPage " + str(currentFaderPage))
                 #time.sleep(0.4)
                 
-                gma2.updateFaderLabels(myConsole)
+                gma2.updateFaderLabels(myConsole, currentFaderPage)
                 
                 for i in range(8):
                     #print("UPDATE value : " + str(currentFaderValueList))
@@ -404,7 +440,7 @@ if __name__ == "__main__":
                 gma2.send_command("FaderPage " + str(currentFaderPage))
                 #time.sleep(0.4)
                 
-                gma2.updateFaderLabels(myConsole)
+                gma2.updateFaderLabels(myConsole, currentFaderPage)
                 #time.sleep(0.5)
                 for i in range(8):
                     #print("UPDATE value : " + str(currentFaderValueList))
