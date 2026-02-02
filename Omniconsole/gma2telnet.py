@@ -44,13 +44,19 @@ class GrandMA2Telnet:
         clean_line = re.sub(r"\x1b\[[0-9;]*m", "", line)
         name_match = re.search(r'Name\s*"?([^"\r\n]*)"?', clean_line)
         if name_match:
-            return name_match.group(1).strip()
+            name = name_match.group(1).strip()
+            name = re.split(r"\s+Seq", name, maxsplit=1)[0]
+            return name.strip()
         colon_match = re.search(r":\s*=?\s*(.*)", clean_line)
         if colon_match:
             tail = colon_match.group(1)
             parts = re.split(r"\s+[A-Za-z]+=", tail, maxsplit=1)
-            return parts[0].strip()
-        return clean_line.strip()
+            name = parts[0].strip()
+            name = re.split(r"\s+Seq", name, maxsplit=1)[0]
+            return name.strip()
+        name = clean_line.strip()
+        name = re.split(r"\s+Seq", name, maxsplit=1)[0]
+        return name.strip()
 
     def list_executor(self):
         self.executorList = self.send_command("List Executor")
@@ -138,7 +144,12 @@ class GrandMA2Telnet:
             label = re.sub(r"\x1b\[[0-9;]*m", "", label)
             label = re.sub("[^a-z0-9- ]+","", label, flags=re.IGNORECASE)
             label = label.removeprefix("33mName37m")
-            label = label.ljust(7)
+            label = label[:7]
+            if len(label) < 7:
+                pad = 7 - len(label)
+                left = pad // 2
+                right = pad - left
+                label = (" " * left) + label + (" " * right)
             console.sendXtouchScribble(i, label)
         
         if include_buttons:
@@ -147,7 +158,12 @@ class GrandMA2Telnet:
                 label = re.sub(r"\x1b\[[0-9;]*m", "", label)
                 label = re.sub("[^a-z0-9- ]+","", label, flags=re.IGNORECASE)
                 label = label.removeprefix("33mName37m")
-                label = label.ljust(7)
+                label = label[:7]
+                if len(label) < 7:
+                    pad = 7 - len(label)
+                    left = pad // 2
+                    right = pad - left
+                    label = (" " * left) + label + (" " * right)
                 console.sendXtouchScribbleRaw2(i-100, label)
 
     def updateButtonLabels(self, console, page=1):
@@ -159,5 +175,10 @@ class GrandMA2Telnet:
             label = re.sub(r"\x1b\[[0-9;]*m", "", label)
             label = re.sub("[^a-z0-9- ]+","", label, flags=re.IGNORECASE)
             label = label.removeprefix("33mName37m")
-            label = label.ljust(7)
+            label = label[:7]
+            if len(label) < 7:
+                pad = 7 - len(label)
+                left = pad // 2
+                right = pad - left
+                label = (" " * left) + label + (" " * right)
             console.sendXtouchScribbleRaw2(i-100, label)
