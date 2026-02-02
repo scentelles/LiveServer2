@@ -6,6 +6,7 @@ from gma2telnet import *
 
 import threading
 import functools
+import queue
 
 MAX_EXEC_PAGE = 4
 MAX_BUTTON_PAGE = MAX_EXEC_PAGE
@@ -130,6 +131,12 @@ class Omniconsole:
             self.scribble_colors.extend([None] * (8 - len(self.scribble_colors)))
         elif len(self.scribble_colors) > 8:
             self.scribble_colors = self.scribble_colors[:8]
+        self._note_state = {}
+        self._note_queue = queue.Queue()
+        self._note_sender = threading.Thread(
+            target=self._note_sender_loop, name="xtouch-note-sender", daemon=True
+        )
+        self._note_sender.start()
 
         xtouch_in_port = TEST_XTOUCH_IN_PORT if test_mode else "OMNICONSOLE*"
         xtouch_out_port = TEST_XTOUCH_OUT_PORT if test_mode else "OMNICONSOLE*"
@@ -215,14 +222,25 @@ class Omniconsole:
         return page_index
 
     def _send_xtouch_flash(self, faderId, on):
-        value = 127 if on else 0
-        message = [MIDI_NOTE, 16 + faderId, value]
-        self.midi_out.send_raw(*message)
+        self._enqueue_note(16 + faderId, on)
 
     def _send_xtouch_led(self, note, on):
-        value = 127 if on else 0
-        message = [MIDI_NOTE, note, value]
-        self.midi_out.send_raw(*message)
+        self._enqueue_note(note, on)
+
+    def _enqueue_note(self, note, on):
+        desired = bool(on)
+        if self._note_state.get(note) == desired:
+            return
+        self._note_state[note] = desired
+        self._note_queue.put((note, desired))
+
+    def _note_sender_loop(self):
+        while True:
+            note, on = self._note_queue.get()
+            value = 127 if on else 0
+            message = [MIDI_NOTE, note, value]
+            self.midi_out.send_raw(*message)
+            time.sleep(0.005)
 
     def _set_on_off_leds(self, faderId, state, page_index=None):
         if page_index is None:
