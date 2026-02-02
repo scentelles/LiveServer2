@@ -24,6 +24,34 @@ MIDI_PITCH_BEND = 0xE0
 MIDI_NOTE = 0x90
 MIDI_CC = 0xB0
 
+TEST_XTOUCH_IN_PORT = "Springbeats vMIDI8"
+TEST_XTOUCH_OUT_PORT = "Springbeats vMIDI7"
+
+def _open_rtmidi2_port(midi_obj, port_match, direction_label):
+    ports = list(midi_obj.ports)
+    if not ports:
+        raise SystemExit(f"No MIDI {direction_label} ports detected.")
+    try:
+        midi_obj.open_port(port_match)
+        return port_match
+    except ValueError:
+        for name in ports:
+            if port_match.lower() in name.lower():
+                midi_obj.open_port(name)
+                return name
+        try:
+            matches = list(midi_obj.ports_matching(port_match))
+        except AttributeError:
+            matches = []
+        if matches:
+            midi_obj.open_port(matches[0])
+            return matches[0]
+    available = "\n  ".join(ports)
+    raise SystemExit(
+        f'MIDI {direction_label} port not found: "{port_match}".\n'
+        f"Available ports:\n  {available}"
+    )
+
 def gma2_in_callback(msg, timestamp):
     command = msg[5]
     
@@ -75,16 +103,21 @@ currentFaderPage = 1
 gobo = 0
 prism = 0
 class Omniconsole:
-    def __init__(self):
+    def __init__(self, test_mode=False):
         """ Initialise la connexion midi a xtouch """
         self.midi_in = rtmidi.MidiIn()
         self.port_name = ""
-        
+        self.flash_requires_zero = [
+            [False] * 8 for _ in range(len(currentFaderValueList))
+        ]
+
+        xtouch_in_port = TEST_XTOUCH_IN_PORT if test_mode else "OMNICONSOLE*"
+        xtouch_out_port = TEST_XTOUCH_OUT_PORT if test_mode else "OMNICONSOLE*"
  
         #XTOUCH Feedback sender
         #https://github.com/NicoG60/TouchMCU/blob/main/doc/mackie_control_protocol.md
         self.midi_out = rtmidi2.MidiOut()
-        self.midi_out.open_port("OMNICONSOLE*")
+        _open_rtmidi2_port(self.midi_out, xtouch_out_port, "OUT")
 
         #STREAM DECK Feedback sender
         self.midi_out_SD = rtmidi2.MidiOut()
@@ -92,7 +125,7 @@ class Omniconsole:
              
         #XTOUCH Receiver
         self.midiReceiveXtouch = rtmidi2.MidiIn()
-        self.midiReceiveXtouch.open_port("OMNICONSOLE*")
+        _open_rtmidi2_port(self.midiReceiveXtouch, xtouch_in_port, "IN")
         self.midiReceiveXtouch.callback = self.midi_callback_xtouch
 
         #STREAM DECK Receiver
@@ -110,6 +143,33 @@ class Omniconsole:
     def sendXtouchScribbleRaw2(self, faderId, label):
         message = [0xF0,00,00,0x66,0x15,0x12,56+faderId*7,ord(label[0]),ord(label[1]),ord(label[2]),ord(label[3]),ord(label[4]),ord(label[5]),ord(label[6]),0xF7]
         self.midi_out.send_raw(*message)
+
+    def _current_page_index(self):
+        page_index = currentFaderPage - 1
+        if page_index < 0:
+            return 0
+        if page_index >= len(self.flash_requires_zero):
+            return len(self.flash_requires_zero) - 1
+        return page_index
+
+    def _send_xtouch_flash(self, faderId, on):
+        value = 127 if on else 0
+        message = [MIDI_NOTE, 16 + faderId, value]
+        self.midi_out.send_raw(*message)
+
+    def _update_flash_from_value(self, faderId, value):
+        page_index = self._current_page_index()
+        if self.flash_requires_zero[page_index][faderId]:
+            if value <= 0:
+                self.flash_requires_zero[page_index][faderId] = False
+            self._send_xtouch_flash(faderId, False)
+            return
+        self._send_xtouch_flash(faderId, value > 0)
+
+    def _send_xtouch_fader(self, faderId, lsb, msb):
+        message = [MIDI_PITCH_BEND + faderId, lsb, msb]
+        self.midi_out.send_raw(*message)
+        self._update_flash_from_value(faderId, (msb << 7) | lsb)
         
     def ack_fader_midi_message(self, faderId):
         global currentFaderLSBList, currentFaderMSBList , active_timer
@@ -117,7 +177,7 @@ class Omniconsole:
 
         """Met a jour le faders après 500 ms"""
         message = [224+faderId, currentFaderLSBList[faderId], currentFaderMSBList[faderId]]  
-        self.midi_out.send_raw(*message)
+        self._send_xtouch_fader(faderId, currentFaderLSBList[faderId], currentFaderMSBList[faderId])
         print("🎹 Message MIDI envoyé :", message)
         
     def midi_callback_xtouch(self, message, data=None):
@@ -147,8 +207,12 @@ class Omniconsole:
             if(note < 8):
                 if(value > 0):
                     gma2.send_command("Off " + str(currentFaderPage) + "." + str(note+1)) 
-                    message = [MIDI_NOTE, 16+note, 0]
-                    self.midi_out.send_raw(*message)
+                    page_index = self._current_page_index()
+                    self.flash_requires_zero[page_index][note] = True
+                    current_value = (currentFaderMSBList[note] << 7) | currentFaderLSBList[note]
+                    if current_value <= 0:
+                        self.flash_requires_zero[page_index][note] = False
+                    self._send_xtouch_flash(note, False)
             elif(note < 16):
                 if(value > 0):
                     gma2.send_command("On " + str(currentFaderPage) + "." + str(note-8+1)) 
@@ -265,9 +329,14 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=30000, help="GrandMA2 telnet port.")
     parser.add_argument("--user", default="Administrator", help="GrandMA2 user.")
     parser.add_argument("--password", default=None, help="GrandMA2 password.")
+    parser.add_argument(
+        "--test-mode",
+        action="store_true",
+        help="Use Springbeats vMIDI8 for X-Touch in/out instead of OMNICONSOLE.",
+    )
     args = parser.parse_args()
 
-    myConsole = Omniconsole()
+    myConsole = Omniconsole(test_mode=args.test_mode)
     # Connexion en tant qu'Administrateur sans mot de passe
     gma2 = GrandMA2Telnet(
         host=args.host,
@@ -285,8 +354,7 @@ if __name__ == "__main__":
             gma2.send_command("Fader " + str(page) + "." + str(i+1) + " At 0")
     
     for i in range(8):
-        message = [224+i, 0, 0]  
-        myConsole.midi_out.send_raw(*message)
+        myConsole._send_xtouch_fader(i, 0, 0)
         time.sleep(0.02)    
 
     #init pagenb to stream deck
@@ -320,8 +388,7 @@ if __name__ == "__main__":
                     #print("UPDATE value : " + str(currentFaderValueList))
                     MSB = (int (currentFaderValueList[currentFaderPage-1][i])*16383/100)/128
                     #print("MSB = " + str(MSB))
-                    message = [224+i, 0, MSB]  
-                    myConsole.midi_out.send_raw(*message)
+                    myConsole._send_xtouch_fader(i, 0, int(MSB))
                     #time.sleep(0.1)
                 
 
@@ -343,8 +410,7 @@ if __name__ == "__main__":
                     #print("UPDATE value : " + str(currentFaderValueList))
                     MSB = (int (currentFaderValueList[currentFaderPage-1][i])*16383/100)/128
                     #print("MSB = " + str(MSB))
-                    message = [224+i, 0, MSB]  
-                    myConsole.midi_out.send_raw(*message)
+                    myConsole._send_xtouch_fader(i, 0, int(MSB))
                     #time.sleep(0.1)
 
  
@@ -352,6 +418,8 @@ if __name__ == "__main__":
                 if(FaderUpdateReceivedList[i] == 1):
                     FaderUpdateReceivedList[i] = 0
                     print("sending msg now!")
+                    current_value = (currentFaderMSBList[i] << 7) | currentFaderLSBList[i]
+                    myConsole._update_flash_from_value(i, current_value)
                     gma2.send_command("Fader " + str(currentFaderPage) + "." + str(i+1) + " At " + str(currentFaderValueList[currentFaderPage-1][i]))
                     if (active_timer_list[i] != None) :
                         active_timer_list[i].cancel()
