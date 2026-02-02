@@ -126,6 +126,11 @@ class Omniconsole:
         self.flash_zeroed = [
             [False] * 8 for _ in range(len(currentFaderValueList))
         ]
+        self.ch_pressed = [False] * 8
+        self.ch_skip_release_off = [False] * 8
+        self.ch_latched = [
+            [False] * 8 for _ in range(len(currentFaderValueList))
+        ]
         self.scribble_colors = list(SCRIBBLE_COLORS) if SCRIBBLE_COLORS else [None] * 8
         if len(self.scribble_colors) < 8:
             self.scribble_colors.extend([None] * (8 - len(self.scribble_colors)))
@@ -219,6 +224,14 @@ class Omniconsole:
             return 0
         if page_index >= len(self.flash_requires_zero):
             return len(self.flash_requires_zero) - 1
+        return page_index
+
+    def _current_button_page_index(self):
+        page_index = currentButtonPage - 1
+        if page_index < 0:
+            return 0
+        if page_index >= len(self.ch_latched):
+            return len(self.ch_latched) - 1
         return page_index
 
     def _send_xtouch_flash(self, faderId, on):
@@ -380,6 +393,11 @@ class Omniconsole:
                 continue
             self._send_xtouch_flash(faderId, True)
 
+    def apply_ch_leds_for_current_button_page(self):
+        page_index = self._current_button_page_index()
+        for ch_id in range(8):
+            self._send_xtouch_led(24 + ch_id, self.ch_latched[page_index][ch_id])
+
     def _send_xtouch_fader(self, faderId, lsb, msb, update_flash=True, update_on_off=True):
         message = [MIDI_PITCH_BEND + faderId, lsb, msb]
         self.midi_out.send_raw(*message)
@@ -449,6 +467,12 @@ class Omniconsole:
                 if(value > 0):
                     gma2.send_command("On " + str(currentFaderPage) + "." + str(note-8+1)) 
                     self._set_on_off_leds(note - 8, "on")
+                    ch_index = note - 8
+                    if 0 <= ch_index < 8 and self.ch_pressed[ch_index]:
+                        page_index = self._current_button_page_index()
+                        if not self.ch_latched[page_index][ch_index]:
+                            self.ch_latched[page_index][ch_index] = True
+                            self._send_xtouch_led(24 + ch_index, True)
             elif(note < 24):
                 flash_index = note - 16
                 page_index = self._current_page_index()
@@ -467,12 +491,28 @@ class Omniconsole:
                     else:
                         gma2.send_command("Flash Off " + str(currentFaderPage) + "." + str(flash_index + 1))                     
             elif(note < 32):
+                ch_index = note - 24
+                page_index = self._current_button_page_index()
                 if(value > 0):
-                    gma2.send_command("On " + str(currentButtonPage) + ".10" + str(note-24+1)) 
-                    self._send_xtouch_led(note, True)
+                    if 0 <= ch_index < 8:
+                        self.ch_pressed[ch_index] = True
+                    if 0 <= ch_index < 8 and self.ch_latched[page_index][ch_index]:
+                        gma2.send_command("Off " + str(currentButtonPage) + ".10" + str(ch_index + 1)) 
+                        self.ch_latched[page_index][ch_index] = False
+                        self.ch_skip_release_off[ch_index] = True
+                        self._send_xtouch_led(note, False)
+                    else:
+                        gma2.send_command("On " + str(currentButtonPage) + ".10" + str(ch_index + 1)) 
+                        self._send_xtouch_led(note, True)
                 if(value == 0):
-                    gma2.send_command("Off " + str(currentButtonPage) + ".10" + str(note-24+1)) 
-                    self._send_xtouch_led(note, False)
+                    if 0 <= ch_index < 8:
+                        self.ch_pressed[ch_index] = False
+                        if self.ch_skip_release_off[ch_index]:
+                            self.ch_skip_release_off[ch_index] = False
+                            return
+                        if not self.ch_latched[page_index][ch_index]:
+                            gma2.send_command("Off " + str(currentButtonPage) + ".10" + str(ch_index + 1)) 
+                            self._send_xtouch_led(note, False)
             elif(note < 40): #Rotary push
                 if(value > 0):
                     gma2.send_command("clear")
@@ -642,6 +682,7 @@ if __name__ == "__main__":
                 gma2.send_command("ButtonPage " + str(page))
                 time.sleep(0.05)
                 gma2.updateButtonLabels(myConsole, page)
+                myConsole.apply_ch_leds_for_current_button_page()
 
             if (pendingFaderPage is not None):
                 page = pendingFaderPage
