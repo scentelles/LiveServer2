@@ -42,21 +42,40 @@ class GrandMA2Telnet:
         
     def _extract_exec_name(self, line):
         clean_line = re.sub(r"\x1b\[[0-9;]*m", "", line)
+        clean_line = clean_line.strip()
+        def _trim_meta(name):
+            name = name.strip()
+            if not name:
+                return ""
+            name = re.split(r"\s+Seq\b", name, maxsplit=1)[0]
+            name = re.split(r"\s+[A-Za-z0-9_]+=", name, maxsplit=1)[0]
+            return name.strip()
+        def _sanitize(name):
+            name = _trim_meta(name)
+            if not name:
+                return ""
+            lowered = name.lower()
+            if lowered.startswith("list executor"):
+                return ""
+            return name
+
+        if clean_line.lower().startswith("list executor"):
+            return ""
         name_match = re.search(r'Name\s*"?([^"\r\n]*)"?', clean_line)
         if name_match:
             name = name_match.group(1).strip()
-            name = re.split(r"\s+Seq", name, maxsplit=1)[0]
-            return name.strip()
+            name = _trim_meta(name)
+            return _sanitize(name)
         colon_match = re.search(r":\s*=?\s*(.*)", clean_line)
         if colon_match:
             tail = colon_match.group(1)
-            parts = re.split(r"\s+[A-Za-z]+=", tail, maxsplit=1)
+            parts = re.split(r"\s+[A-Za-z0-9_]+=", tail, maxsplit=1)
             name = parts[0].strip()
-            name = re.split(r"\s+Seq", name, maxsplit=1)[0]
-            return name.strip()
+            name = _trim_meta(name)
+            return _sanitize(name)
         name = clean_line.strip()
-        name = re.split(r"\s+Seq", name, maxsplit=1)[0]
-        return name.strip()
+        name = _trim_meta(name)
+        return _sanitize(name)
 
     def list_executor(self):
         self.executorList = self.send_command("List Executor")
@@ -115,7 +134,18 @@ class GrandMA2Telnet:
                 self.socket.sendall(command_str.encode('utf-8'))
                 time.sleep(0.01)  # Pause pour assurer la réception
                 
-                response = self.socket.recv(32096).decode('utf-8', errors='ignore')
+                chunks = []
+                while True:
+                    try:
+                        data = self.socket.recv(32096)
+                    except socket.timeout:
+                        break
+                    if not data:
+                        break
+                    chunks.append(data.decode('utf-8', errors='ignore'))
+                    if len(data) < 32096:
+                        break
+                response = "".join(chunks)
                 print(f"📤 Commande envoyée : {command}")
                 if response:
                     #print(f"📥 Réponse : {response}")
