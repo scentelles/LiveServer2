@@ -103,8 +103,11 @@ active_timer_list = [None, None, None, None, None, None, None, None]
 
 pendingFaderPage = None
 pendingButtonPage = None
+pendingFaderPageAt = None
+pendingButtonPageAt = None
 currentFaderPage = 1
 currentButtonPage = 1
+PAGE_CHANGE_DEBOUNCE = 0.15
 
 
 gobo = 0
@@ -588,6 +591,7 @@ class Omniconsole:
                 
     def midi_callback_streamdeck(self, message, data=None):
         global pendingFaderPage, pendingButtonPage, currentFaderPage, currentButtonPage
+        global pendingFaderPageAt, pendingButtonPageAt
         print("STREAMDECK Message MIDI reçu :", self.port_name, ":", message)
         if(message[1] == 127):
             print ("Page UP")
@@ -595,24 +599,28 @@ class Omniconsole:
             if new_page <= MAX_EXEC_PAGE:
                 currentFaderPage = new_page
                 pendingFaderPage = new_page
+                pendingFaderPageAt = time.time()
         if(message[1] == 126):
             print ("Page DOWN")
             new_page = currentFaderPage - 1
             if new_page >= 1:
                 currentFaderPage = new_page
                 pendingFaderPage = new_page
+                pendingFaderPageAt = time.time()
         if(message[1] == 117):
             print ("Button Page UP")
             new_page = currentButtonPage + 1
             if new_page <= MAX_BUTTON_PAGE:
                 currentButtonPage = new_page
                 pendingButtonPage = new_page
+                pendingButtonPageAt = time.time()
         if(message[1] == 116):
             print ("Button Page DOWN")
             new_page = currentButtonPage - 1
             if new_page >= 1:
                 currentButtonPage = new_page
                 pendingButtonPage = new_page
+                pendingButtonPageAt = time.time()
 
 
 
@@ -673,10 +681,16 @@ if __name__ == "__main__":
     try:
         print("En écoute des messages MIDI...")
         while True:
-        
-            if (pendingButtonPage is not None):
+            now = time.time()
+
+            if (
+                pendingButtonPage is not None
+                and (pendingButtonPageAt is None
+                     or (now - pendingButtonPageAt) >= PAGE_CHANGE_DEBOUNCE)
+            ):
                 page = pendingButtonPage
                 pendingButtonPage = None
+                pendingButtonPageAt = None
                 message = [0xB0, 117, page]
                 myConsole.midi_out_SD.send_raw(*message)
                 gma2.send_command("ButtonPage " + str(page))
@@ -684,9 +698,14 @@ if __name__ == "__main__":
                 gma2.updateButtonLabels(myConsole, page)
                 myConsole.apply_ch_leds_for_current_button_page()
 
-            if (pendingFaderPage is not None):
+            if (
+                pendingFaderPage is not None
+                and (pendingFaderPageAt is None
+                     or (now - pendingFaderPageAt) >= PAGE_CHANGE_DEBOUNCE)
+            ):
                 page = pendingFaderPage
                 pendingFaderPage = None
+                pendingFaderPageAt = None
                 message = [0xB0, 127, page]
                 myConsole.midi_out_SD.send_raw(*message)
                 

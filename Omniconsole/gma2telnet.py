@@ -167,7 +167,7 @@ class GrandMA2Telnet:
 
 
     def updateFaderLabels(self, console, page=1, include_buttons=False):
-        self.list_executor()
+        self.list_executor_range(page, 1, 8)
         for i in range(8):
             label = self.execIdToName.get((page, i + 1), "")
             #label = ''.join(c for c in label if c.isprintable())
@@ -183,6 +183,7 @@ class GrandMA2Telnet:
             console.sendXtouchScribble(i, label)
         
         if include_buttons:
+            self.list_executor_range(page, 101, 108)
             for i in range(100,108):
                 label = self.execIdToName.get((page, i + 1), "")
                 label = re.sub(r"\x1b\[[0-9;]*m", "", label)
