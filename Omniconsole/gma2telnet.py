@@ -1,4 +1,5 @@
 import sys
+import select
 import socket
 import time
 import re
@@ -130,21 +131,40 @@ class GrandMA2Telnet:
         print("Sending telnet command")
         if self.socket:
             try:
-                command_str = command + "\r"
+                # Vider le buffer de reception (drain)
+                while True:
+                    r, _, _ = select.select([self.socket], [], [], 0.0)
+                    if r:
+                        try:
+                            self.socket.recv(32096)
+                        except Exception:
+                            break
+                    else:
+                        break
+
+                command_str = command + ""
                 self.socket.sendall(command_str.encode('utf-8'))
-                time.sleep(0.01)  # Pause pour assurer la réception
+                import time
+                time.sleep(0.01)  # Pause pour assurer la reception
                 
                 chunks = []
+                timeout = 0.2
                 while True:
+                    r, _, _ = select.select([self.socket], [], [], timeout)
+                    if not r:
+                        break
                     try:
                         data = self.socket.recv(32096)
                     except socket.timeout:
+                        break
+                    except Exception:
                         break
                     if not data:
                         break
                     chunks.append(data.decode('utf-8', errors='ignore'))
                     if len(data) < 32096:
                         break
+                    timeout = 0.05
                 response = "".join(chunks)
                 print(f"📤 Commande envoyée : {command}")
                 if response:
