@@ -14,13 +14,13 @@ MAX_BUTTON_PAGE = MAX_EXEC_PAGE
 #0xf0:0x7f:0x7f:0x2:0x7f:0xa:0x30:0x2e:0x30:0x30:0x30:0x0:0x31:0x2e:0x31:0xf7:
 #F0     7F	7F	02	7F	Command	Data	F7
 
-COMMAND_GO = 1
-COMMAND_STOP = 2
-COMMAND_RESUME = 3
-COMMAND_TIMED_GO = 4
-COMMAND_SET = 6
-COMMAND_FIRE = 7
-COMMAND_STOP = 0xa
+COMMAND_GO = 0x01
+COMMAND_STOP = 0x02
+COMMAND_RESUME = 0x03
+COMMAND_TIMED_GO = 0x04
+COMMAND_SET = 0x06
+COMMAND_FIRE = 0x07
+COMMAND_ALL_OFF = 0x0A
 
 MIDI_PITCH_BEND = 0xE0
 MIDI_NOTE = 0x90
@@ -63,13 +63,17 @@ def gma2_in_callback(msg, timestamp):
     
     if(command == COMMAND_GO):
         commandStr = "GO"
-    if(command == COMMAND_STOP):
+    elif(command == COMMAND_STOP):
         commandStr = "STOP"
+    elif(command == COMMAND_ALL_OFF):
+        commandStr = "ALL_OFF"
+    else:
+        commandStr = f"UNKNOWN(0x{command:02x})"
 
     index = 6
     thisCue = ""
     thisExec = ""
-    if((command == COMMAND_GO) or (command == COMMAND_STOP)):
+    if command in (COMMAND_GO, COMMAND_STOP, COMMAND_ALL_OFF):
         while(msg[index] != 0x0):
             thisCue += chr(msg[index])
             index+=1
@@ -92,6 +96,8 @@ gma2_in.callback = gma2_in_callback
 
 
     
+
+state_lock = threading.Lock()
 
 currentFaderValueList = [[0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0]]
 currentFaderLSBList = [0,0,0,0,0,0,0,0]
@@ -412,22 +418,16 @@ class Omniconsole:
             self._update_flash_from_value(faderId, value)
         
     def ack_fader_midi_message(self, faderId):
-        global currentFaderLSBList, currentFaderMSBList , active_timer
-        active_timer_list[faderId] = None
-
         """Met a jour le faders après 500 ms"""
-        message = [224+faderId, currentFaderLSBList[faderId], currentFaderMSBList[faderId]]  
-        self._send_xtouch_fader(
-            faderId,
-            currentFaderLSBList[faderId],
-            currentFaderMSBList[faderId],
-            update_flash=False,
-            update_on_off=False,
-        )
+        with state_lock:
+            active_timer_list[faderId] = None
+            lsb = currentFaderLSBList[faderId]
+            msb = currentFaderMSBList[faderId]
+        message = [224+faderId, lsb, msb]
+        self._send_xtouch_fader(faderId, lsb, msb, update_flash=False, update_on_off=False)
         print("🎹 Message MIDI envoyé :", message)
         
     def midi_callback_xtouch(self, message, data=None):
-        global FaderUpdateReceived, currentFaderValueList, currentFaderLSBList, currentFaderMSBList, FaderUpdateReceivedList, currentFaderPage, currentButtonPage
         global gma2
         global gobo, prism
 
@@ -436,18 +436,16 @@ class Omniconsole:
         
         if(midiCommand == MIDI_PITCH_BEND):
             
-            #value = (message[1] * 128) + message[2]  # MSB * 128 + LSB
             changedFader = message[0]-MIDI_PITCH_BEND
-            
             value = message[2] * 128 + message[1]
             percentage = int((value / 16383) * 100)
-            page_index = currentFaderPage - 1
-            prev_percentage = currentFaderValueList[page_index][changedFader]
-            currentFaderValueList[page_index][changedFader] = percentage
-            
-            currentFaderLSBList[changedFader] = message[1]
-            currentFaderMSBList[changedFader] = message[2]
-            FaderUpdateReceivedList[changedFader] = page_index
+            with state_lock:
+                page_index = currentFaderPage - 1
+                prev_percentage = currentFaderValueList[page_index][changedFader]
+                currentFaderValueList[page_index][changedFader] = percentage
+                currentFaderLSBList[changedFader] = message[1]
+                currentFaderMSBList[changedFader] = message[2]
+                FaderUpdateReceivedList[changedFader] = page_index
             self._update_on_off_from_value(changedFader, value, page_index=page_index)
             if percentage <= 0 and prev_percentage > 0:
                 self.flash_zeroed[page_index][changedFader] = True
@@ -611,34 +609,35 @@ class Omniconsole:
         global pendingFaderPage, pendingButtonPage, currentFaderPage, currentButtonPage
         global pendingFaderPageAt, pendingButtonPageAt
         print("STREAMDECK Message MIDI reçu :", self.port_name, ":", message)
-        if(message[1] == 127):
-            print ("Page UP")
-            new_page = currentFaderPage + 1
-            if new_page <= MAX_EXEC_PAGE:
-                currentFaderPage = new_page
-                pendingFaderPage = new_page
-                pendingFaderPageAt = time.time()
-        if(message[1] == 126):
-            print ("Page DOWN")
-            new_page = currentFaderPage - 1
-            if new_page >= 1:
-                currentFaderPage = new_page
-                pendingFaderPage = new_page
-                pendingFaderPageAt = time.time()
-        if(message[1] == 117):
-            print ("Button Page UP")
-            new_page = currentButtonPage + 1
-            if new_page <= MAX_BUTTON_PAGE:
-                currentButtonPage = new_page
-                pendingButtonPage = new_page
-                pendingButtonPageAt = time.time()
-        if(message[1] == 116):
-            print ("Button Page DOWN")
-            new_page = currentButtonPage - 1
-            if new_page >= 1:
-                currentButtonPage = new_page
-                pendingButtonPage = new_page
-                pendingButtonPageAt = time.time()
+        with state_lock:
+            if(message[1] == 127):
+                print ("Page UP")
+                new_page = currentFaderPage + 1
+                if new_page <= MAX_EXEC_PAGE:
+                    currentFaderPage = new_page
+                    pendingFaderPage = new_page
+                    pendingFaderPageAt = time.time()
+            if(message[1] == 126):
+                print ("Page DOWN")
+                new_page = currentFaderPage - 1
+                if new_page >= 1:
+                    currentFaderPage = new_page
+                    pendingFaderPage = new_page
+                    pendingFaderPageAt = time.time()
+            if(message[1] == 117):
+                print ("Button Page UP")
+                new_page = currentButtonPage + 1
+                if new_page <= MAX_BUTTON_PAGE:
+                    currentButtonPage = new_page
+                    pendingButtonPage = new_page
+                    pendingButtonPageAt = time.time()
+            if(message[1] == 116):
+                print ("Button Page DOWN")
+                new_page = currentButtonPage - 1
+                if new_page >= 1:
+                    currentButtonPage = new_page
+                    pendingButtonPage = new_page
+                    pendingButtonPageAt = time.time()
 
 
 
@@ -701,82 +700,84 @@ if __name__ == "__main__":
         while True:
             now = time.time()
 
-            if (
-                pendingButtonPage is not None
-                and (pendingButtonPageAt is None
-                     or (now - pendingButtonPageAt) >= PAGE_CHANGE_DEBOUNCE)
-            ):
-                page = pendingButtonPage
-                pendingButtonPage = None
-                pendingButtonPageAt = None
-                message = [0xB0, 117, page]
-                myConsole.midi_out_SD.send_raw(*message)
-                gma2.send_command("ButtonPage " + str(page))
-                time.sleep(0.05)
-                gma2.updateButtonLabels(myConsole, page)
-                myConsole.apply_ch_leds_for_current_button_page()
+            # Snapshot pending page state under lock
+            with state_lock:
+                _pendingBtnPage = pendingButtonPage
+                _pendingBtnAt = pendingButtonPageAt
+                _pendingFdrPage = pendingFaderPage
+                _pendingFdrAt = pendingFaderPageAt
 
             if (
-                pendingFaderPage is not None
-                and (pendingFaderPageAt is None
-                     or (now - pendingFaderPageAt) >= PAGE_CHANGE_DEBOUNCE)
+                _pendingBtnPage is not None
+                and (_pendingBtnAt is None
+                     or (now - _pendingBtnAt) >= PAGE_CHANGE_DEBOUNCE)
             ):
-                page = pendingFaderPage
-                pendingFaderPage = None
-                pendingFaderPageAt = None
-                message = [0xB0, 127, page]
-                myConsole.midi_out_SD.send_raw(*message)
-                
-                
-                #print("Updating exec page")
-                gma2.send_command("FaderPage " + str(page))
-                time.sleep(0.1)
-                
-                gma2.updateFaderLabels(myConsole, page)
-                
-                for i in range(8):
-                    #print("UPDATE value : " + str(currentFaderValueList))
-                    MSB = (int (currentFaderValueList[page-1][i])*16383/100)/128
-                    #print("MSB = " + str(MSB))
-                    myConsole._send_xtouch_fader(i, 0, int(MSB), update_flash=False, update_on_off=False)
-                    time.sleep(0.01)
-                myConsole.apply_on_off_leds_for_current_page()
-                myConsole.apply_flash_leds_for_current_page()
+                with state_lock:
+                    page = pendingButtonPage
+                    pendingButtonPage = None
+                    pendingButtonPageAt = None
+                if page is not None:
+                    message = [0xB0, 117, page]
+                    myConsole.midi_out_SD.send_raw(*message)
+                    gma2.send_command("ButtonPage " + str(page))
+                    time.sleep(0.05)
+                    gma2.updateButtonLabels(myConsole, page)
+                    myConsole.apply_ch_leds_for_current_button_page()
 
- 
+            if (
+                _pendingFdrPage is not None
+                and (_pendingFdrAt is None
+                     or (now - _pendingFdrAt) >= PAGE_CHANGE_DEBOUNCE)
+            ):
+                with state_lock:
+                    page = pendingFaderPage
+                    pendingFaderPage = None
+                    pendingFaderPageAt = None
+                if page is not None:
+                    message = [0xB0, 127, page]
+                    myConsole.midi_out_SD.send_raw(*message)
+                    gma2.send_command("FaderPage " + str(page))
+                    time.sleep(0.1)
+                    gma2.updateFaderLabels(myConsole, page)
+                    with state_lock:
+                        fader_values = [currentFaderValueList[page-1][i] for i in range(8)]
+                    for i in range(8):
+                        value_14bit = int(fader_values[i] * 16383 / 100)
+                        lsb = value_14bit & 0x7F
+                        msb = (value_14bit >> 7) & 0x7F
+                        myConsole._send_xtouch_fader(i, lsb, msb, update_flash=False, update_on_off=False)
+                        time.sleep(0.01)
+                    myConsole.apply_on_off_leds_for_current_page()
+                    myConsole.apply_flash_leds_for_current_page()
+
             for i in range(8):
-                if(FaderUpdateReceivedList[i] is not None):
+                with state_lock:
                     update_page_index = FaderUpdateReceivedList[i]
-                    FaderUpdateReceivedList[i] = None
-                    print("sending msg now!")
-                    current_value = (currentFaderMSBList[i] << 7) | currentFaderLSBList[i]
-                    if update_page_index == (currentFaderPage - 1):
-                        myConsole._update_flash_from_value(
-                            i, current_value, page_index=update_page_index
-                        )
-                    gma2.send_command(
-                        "Fader "
-                        + str(update_page_index + 1)
-                        + "."
-                        + str(i + 1)
-                        + " At "
-                        + str(currentFaderValueList[update_page_index][i])
+                    if update_page_index is not None:
+                        FaderUpdateReceivedList[i] = None
+                        current_value = (currentFaderMSBList[i] << 7) | currentFaderLSBList[i]
+                        fader_pct = currentFaderValueList[update_page_index][i]
+                        cur_fader_page = currentFaderPage
+                    else:
+                        continue
+                print("sending msg now!")
+                if update_page_index == (cur_fader_page - 1):
+                    myConsole._update_flash_from_value(
+                        i, current_value, page_index=update_page_index
                     )
-                    if (active_timer_list[i] != None) :
+                gma2.send_command(
+                    f"Fader {update_page_index + 1}.{i + 1} At {fader_pct}"
+                )
+                with state_lock:
+                    if active_timer_list[i] is not None:
                         active_timer_list[i].cancel()
                     active_timer_list[i] = threading.Timer(0.5, functools.partial(myConsole.ack_fader_midi_message, i))
-                       
                     active_timer_list[i].start()
-                
-                   
 
-        
             time.sleep(0.02)
-            pass  # Boucle infinie pour continuer à écouter
     except KeyboardInterrupt:
         print("\nArrêt du programme...")
     finally:
-   
         # Fermer la connexion
-        xtouch.midi_in.close_port()
+        myConsole.midi_in.close_port()
         gma2.close()

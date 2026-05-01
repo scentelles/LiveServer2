@@ -16,6 +16,8 @@ class GrandMA2Telnet:
         self.user = user
         self.password = password
         self.verbose = verbose
+        self._max_reconnect_attempts = 5
+        self._reconnect_delay = 1.0
         self.executorList = ""
         self.execIdToName = {}
         
@@ -40,6 +42,29 @@ class GrandMA2Telnet:
 
         except Exception as e:
             print(f"❌ Erreur de connexion : {e}")
+            return False
+        return True
+
+    def _reconnect(self):
+        """ Tente de se reconnecter au serveur GrandMA2 avec backoff """
+        for attempt in range(1, self._max_reconnect_attempts + 1):
+            delay = self._reconnect_delay * attempt
+            print(f"🔄 Tentative de reconnexion {attempt}/{self._max_reconnect_attempts} dans {delay:.1f}s...")
+            time.sleep(delay)
+            try:
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except Exception:
+                        pass
+                    self.socket = None
+                if self.connect():
+                    print(f"✅ Reconnexion réussie (tentative {attempt})")
+                    return True
+            except Exception as e:
+                print(f"❌ Échec reconnexion tentative {attempt}: {e}")
+        print("❌ Reconnexion impossible après toutes les tentatives.")
+        return False
         
     def _extract_exec_name(self, line):
         clean_line = re.sub(r"\x1b\[[0-9;]*m", "", line)
@@ -128,56 +153,69 @@ class GrandMA2Telnet:
                 continue
                         
     def send_command(self, command):
-        """ Envoie une commande Telnet à GrandMA2 """
-        print("Sending telnet command")
-        if self.socket:
-            try:
-                # Vider le buffer de reception (drain)
-                while True:
-                    r, _, _ = select.select([self.socket], [], [], 0.0)
-                    if r:
-                        try:
-                            self.socket.recv(32096)
-                        except Exception:
-                            break
-                    else:
-                        break
+        """ Envoie une commande Telnet à GrandMA2, avec reconnexion automatique """
+        if not self.socket:
+            print("⚠️ Aucune connexion active à GrandMA2, tentative de reconnexion...")
+            if not self._reconnect():
+                return None
+        try:
+            return self._send_command_inner(command)
+        except (ConnectionError, OSError, socket.error) as e:
+            print(f"❌ Connexion perdue ({e}), reconnexion...")
+            if self._reconnect():
+                try:
+                    return self._send_command_inner(command)
+                except Exception as e2:
+                    print(f"❌ Échec après reconnexion : {e2}")
+            return None
+        except Exception as e:
+            print(f"❌ Erreur lors de l'envoi de la commande : {e}")
+            return None
 
-                command_str = command + ""
-                self.socket.sendall(command_str.encode('utf-8'))
-                import time
-                time.sleep(0.01)  # Pause pour assurer la reception
-                
-                chunks = []
-                timeout = 0.2
-                while True:
-                    r, _, _ = select.select([self.socket], [], [], timeout)
-                    if not r:
-                        break
-                    try:
-                        data = self.socket.recv(32096)
-                    except socket.timeout:
-                        break
-                    except Exception:
-                        break
-                    if not data:
-                        break
-                    chunks.append(data.decode('utf-8', errors='ignore'))
-                    if len(data) < 32096:
-                        break
-                    timeout = 0.05
-                response = "".join(chunks)
-                print(f"📤 Commande envoyée : {command}")
-                if response:
-                    #print(f"📥 Réponse : {response}")
-                    if("Error" in response):
-                        print("GMA2 ERROR : " + response)
-                    else:
-                        return response
-            except Exception as e:
-                print(f"❌ Erreur lors de l'envoi de la commande : {e}")
-        else:
-            print("⚠️ Aucune connexion active à GrandMA2 !")
+    def _send_command_inner(self, command):
+        """ Envoie effectivement la commande (sans logique de reconnexion) """
+        print("Sending telnet command")
+        # Vider le buffer de reception (drain)
+        while True:
+            r, _, _ = select.select([self.socket], [], [], 0.0)
+            if r:
+                try:
+                    self.socket.recv(32096)
+                except Exception:
+                    break
+            else:
+                break
+
+        command_str = command + "\r\n"
+        self.socket.sendall(command_str.encode('utf-8'))
+        time.sleep(0.01)  # Pause pour assurer la reception
+        
+        chunks = []
+        timeout = 0.2
+        while True:
+            r, _, _ = select.select([self.socket], [], [], timeout)
+            if not r:
+                break
+            try:
+                data = self.socket.recv(32096)
+            except socket.timeout:
+                break
+            except Exception:
+                break
+            if not data:
+                break
+            chunks.append(data.decode('utf-8', errors='ignore'))
+            if len(data) < 32096:
+                break
+            timeout = 0.05
+        response = "".join(chunks)
+        print(f"📤 Commande envoyée : {command}")
+        if response:
+            if("Error" in response):
+                print("GMA2 ERROR : " + response)
+            else:
+                return response
+        return None
 
     def close(self):
         """ Ferme la connexion proprement """
