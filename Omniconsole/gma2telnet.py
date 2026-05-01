@@ -3,6 +3,7 @@ import select
 import socket
 import time
 import re
+import threading
 
 sys.stdout.reconfigure(encoding='utf-8')  # Pour éviter l'erreur charmap sur Windows
 
@@ -20,6 +21,9 @@ class GrandMA2Telnet:
         self._reconnect_delay = 1.0
         self.executorList = ""
         self.execIdToName = {}
+        self._socket_lock = threading.Lock()
+        self._stop_drain = threading.Event()
+        self._drain_thread = None
         
     def connect(self):
         """ Établit la connexion au serveur Telnet et se connecte en tant qu'administrateur """
@@ -34,6 +38,11 @@ class GrandMA2Telnet:
                 login_command = f'Login {self.user} "{self.password}"'
             else:
                 login_command = f'Login {self.user}'
+            
+            # Start drain thread before sending first command
+            self._stop_drain.clear()
+            self._drain_thread = threading.Thread(target=self._drain_loop, daemon=True)
+            self._drain_thread.start()
             
             self.send_command(login_command)
             
@@ -66,6 +75,19 @@ class GrandMA2Telnet:
         print("❌ Reconnexion impossible après toutes les tentatives.")
         return False
         
+    def _drain_loop(self):
+        """ Vide en permanence le buffer de réception en arrière-plan pour éviter que la GMA2 ne freeze. """
+        while not self._stop_drain.is_set():
+            if self.socket:
+                try:
+                    with self._socket_lock:
+                        r, _, _ = select.select([self.socket], [], [], 0.0)
+                        if r:
+                            self.socket.recv(32096)
+                except Exception:
+                    pass
+            time.sleep(0.05)
+
     def _extract_exec_name(self, line):
         clean_line = re.sub(r"\x1b\[[0-9;]*m", "", line)
         clean_line = clean_line.strip()
@@ -175,50 +197,52 @@ class GrandMA2Telnet:
     def _send_command_inner(self, command):
         """ Envoie effectivement la commande (sans logique de reconnexion) """
         print("Sending telnet command")
-        # Vider le buffer de reception (drain)
-        while True:
-            r, _, _ = select.select([self.socket], [], [], 0.0)
-            if r:
+        with self._socket_lock:
+            # Vider le buffer de reception (drain)
+            while True:
+                r, _, _ = select.select([self.socket], [], [], 0.0)
+                if r:
+                    try:
+                        self.socket.recv(32096)
+                    except Exception:
+                        break
+                else:
+                    break
+
+            command_str = command + "\r\n"
+            self.socket.sendall(command_str.encode('utf-8'))
+            time.sleep(0.01)  # Pause pour assurer la reception
+        
+            chunks = []
+            timeout = 0.2
+            while True:
+                r, _, _ = select.select([self.socket], [], [], timeout)
+                if not r:
+                    break
                 try:
-                    self.socket.recv(32096)
+                    data = self.socket.recv(32096)
+                except socket.timeout:
+                    break
                 except Exception:
                     break
-            else:
-                break
-
-        command_str = command + "\r\n"
-        self.socket.sendall(command_str.encode('utf-8'))
-        time.sleep(0.01)  # Pause pour assurer la reception
-        
-        chunks = []
-        timeout = 0.2
-        while True:
-            r, _, _ = select.select([self.socket], [], [], timeout)
-            if not r:
-                break
-            try:
-                data = self.socket.recv(32096)
-            except socket.timeout:
-                break
-            except Exception:
-                break
-            if not data:
-                break
-            chunks.append(data.decode('utf-8', errors='ignore'))
-            if len(data) < 32096:
-                break
-            timeout = 0.05
-        response = "".join(chunks)
-        print(f"📤 Commande envoyée : {command}")
-        if response:
-            if("Error" in response):
-                print("GMA2 ERROR : " + response)
-            else:
-                return response
+                if not data:
+                    break
+                chunks.append(data.decode('utf-8', errors='ignore'))
+                if len(data) < 32096:
+                    break
+                timeout = 0.05
+            response = "".join(chunks)
+            print(f"📤 Commande envoyée : {command}")
+            if response:
+                if("Error" in response):
+                    print("GMA2 ERROR : " + response)
+                else:
+                    return response
         return None
 
     def close(self):
         """ Ferme la connexion proprement """
+        self._stop_drain.set()
         if self.socket:
             self.socket.close()
             print("🔌 Connexion fermée.")
