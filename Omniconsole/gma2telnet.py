@@ -103,6 +103,7 @@ class GrandMA2Telnet:
         self.executorList = self.send_command(
             f"List Executor {page}.{start_exec} Thru {page}.{end_exec}"
         )
+        time.sleep(0.1)
         self.execIdToName = {}
         if not self.executorList:
             return

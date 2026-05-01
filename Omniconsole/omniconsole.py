@@ -146,9 +146,10 @@ class Omniconsole:
         )
         self._note_sender.start()
 
-        xtouch_in_port = TEST_XTOUCH_IN_PORT if test_mode else "OMNICONSOLE*"
-        xtouch_out_port = TEST_XTOUCH_OUT_PORT if test_mode else "OMNICONSOLE*"
- 
+        #xtouch_in_port = TEST_XTOUCH_IN_PORT if test_mode else "OMNICONSOLE*"
+        #xtouch_out_port = TEST_XTOUCH_OUT_PORT if test_mode else "OMNICONSOLE*"
+        xtouch_in_port = TEST_XTOUCH_IN_PORT if test_mode else "Springbeats vMIDI5*"
+        xtouch_out_port = TEST_XTOUCH_OUT_PORT if test_mode else "Springbeats vMIDI4*" 
         #XTOUCH Feedback sender
         #https://github.com/NicoG60/TouchMCU/blob/main/doc/mackie_control_protocol.md
         self.midi_out = rtmidi2.MidiOut()
@@ -519,23 +520,40 @@ class Omniconsole:
             elif(note < 40): #Rotary push
                 if(value > 0):
                     gma2.send_command("clear")
-                    if (note==32):
-                        gma2.send_command("Fixture 101 thru 199") 
-                    if (note==33):
-                        gma2.send_command("Group 15")
-                    if (note==34):
-                        gma2.send_command("Group 8")
-                    if (note==35):
-                        gma2.send_command("Group 2")
-                    if (note==36):
-                        gma2.send_command("Group 10")
-                    if (note==37):
-                        gma2.send_command("Fixture 380 thru 381")
-                    if (note==38):
-                        gma2.send_command("Group 1")
-                    if (note==39):
-                        gma2.send_command("Fixture 1")#nothing for now
-
+                    if currentFaderPage == 1:
+                        if (note==32):
+                            gma2.send_command("Fixture 101 thru 199")  #FRONT
+                        if (note==33):
+                            gma2.send_command("Group 10")  #BIG WASH 
+                        if (note==34):
+                            gma2.send_command("Group 8") #MINI WASH
+                        if (note==35):
+                            gma2.send_command("Group 2") #PAR REAR
+                        if (note==36):
+                            gma2.send_command("Group 3") #CONTRE
+                        if (note==37):
+                            gma2.send_command("") #BLINDER NO NEED
+                        if (note==38):
+                            gma2.send_command("Group 1")  #LYRES
+                        if (note==39):
+                            gma2.send_command("Group 6") #LED BARS
+                    if currentFaderPage == 2:
+                        if (note==32):
+                            gma2.send_command("") 
+                        if (note==33):
+                            gma2.send_command("")
+                        if (note==34):
+                            gma2.send_command("Group 9")#SPIDER
+                        if (note==35):
+                            gma2.send_command("Group 4")#SIDEBEAM
+                        if (note==36):
+                            gma2.send_command("Group 3") #CONTRE
+                        if (note==37):
+                            gma2.send_command("")#BLINDER NO NEED
+                        if (note==38):
+                            gma2.send_command("Group 1")  #LYRES
+                        if (note==39):
+                            gma2.send_command("Group 6") #LED BARS
 
 
                         
