@@ -151,8 +151,7 @@ class GrandMA2Telnet:
         self.executorList = self.send_command(
             f"List Executor {page}.{start_exec} Thru {page}.{end_exec}"
         )
-        time.sleep(0.1)
-        self.execIdToName = {}
+        time.sleep(0.4)
         if not self.executorList:
             return
 
@@ -248,9 +247,16 @@ class GrandMA2Telnet:
             print("🔌 Connexion fermée.")
 
 
+    def fetch_all_labels(self):
+        """ Récupère tous les labels des 4 pages au démarrage pour éviter de le faire à la volée. """
+        print("⏳ Récupération des noms d'exécuteurs...")
+        self.execIdToName = {}
+        for p in range(1, 5):
+            self.list_executor_range(p, 1, 8)
+            self.list_executor_range(p, 101, 108)
+        print("✅ Noms d'exécuteurs chargés.")
 
     def updateFaderLabels(self, console, page=1, include_buttons=False):
-        self.list_executor_range(page, 1, 8)
         for i in range(8):
             label = self.execIdToName.get((page, i + 1), "")
             #label = ''.join(c for c in label if c.isprintable())
@@ -266,7 +272,6 @@ class GrandMA2Telnet:
             console.sendXtouchScribble(i, label)
         
         if include_buttons:
-            self.list_executor_range(page, 101, 108)
             for i in range(100,108):
                 label = self.execIdToName.get((page, i + 1), "")
                 label = re.sub(r"\x1b\[[0-9;]*m", "", label)
@@ -281,9 +286,6 @@ class GrandMA2Telnet:
                 console.sendXtouchScribbleRaw2(i-100, label)
 
     def updateButtonLabels(self, console, page=1):
-        self.list_executor_range(page, 101, 108)
-        if not self.execIdToName:
-            self.list_executor()
         for i in range(100,108):
             label = self.execIdToName.get((page, i + 1), "")
             label = re.sub(r"\x1b\[[0-9;]*m", "", label)

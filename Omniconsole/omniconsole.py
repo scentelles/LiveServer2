@@ -671,6 +671,7 @@ if __name__ == "__main__":
         password=args.password,
     )
     gma2.connect()
+    gma2.fetch_all_labels()
 
     gma2.send_command("FaderPage 1")
     gma2.send_command("ButtonPage 1")
@@ -736,7 +737,7 @@ if __name__ == "__main__":
                     message = [0xB0, 127, page]
                     myConsole.midi_out_SD.send_raw(*message)
                     gma2.send_command("FaderPage " + str(page))
-                    time.sleep(0.1)
+                    time.sleep(0.02)
                     gma2.updateFaderLabels(myConsole, page)
                     with state_lock:
                         fader_values = [currentFaderValueList[page-1][i] for i in range(8)]
