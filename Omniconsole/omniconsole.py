@@ -88,14 +88,7 @@ def gma2_in_callback(msg, timestamp):
         value += str(hex(msg[i])) + ":"
     print(value) 
 
-    
-gma2_in = rtmidi2.MidiIn()
-gma2_in.ignore_types(midi_sysex=False)
-gma2_in.open_port("Springbeats vMIDI4*")   
-gma2_in.callback = gma2_in_callback
 
-
-    
 
 state_lock = threading.Lock()
 
@@ -163,7 +156,7 @@ class Omniconsole:
 
         #STREAM DECK Feedback sender
         self.midi_out_SD = rtmidi2.MidiOut()
-        self.midi_out_SD.open_port("Springbeats vMIDI3*")
+        _open_rtmidi2_port(self.midi_out_SD, "Springbeats vMIDI3*", "OUT")
              
         #XTOUCH Receiver
         self.midiReceiveXtouch = rtmidi2.MidiIn()
@@ -172,7 +165,7 @@ class Omniconsole:
 
         #STREAM DECK Receiver
         self.midiReceiveStreamdeck = rtmidi2.MidiIn()
-        self.midiReceiveStreamdeck.open_port("Springbeats vMIDI2*")      
+        _open_rtmidi2_port(self.midiReceiveStreamdeck, "Springbeats vMIDI2*", "IN")
         self.midiReceiveStreamdeck.callback = self.midi_callback_streamdeck
 
 
@@ -485,7 +478,7 @@ class Omniconsole:
                         gma2.send_command("On " + str(currentFaderPage) + "." + str(flash_index + 1))
                         self._send_xtouch_flash(flash_index, True)
                     else:
-                        gma2.send_command("TStrbemp " + str(currentFaderPage) + "." + str(flash_index + 1)) 
+                        gma2.send_command("Temp " + str(currentFaderPage) + "." + str(flash_index + 1)) 
                 if(value == 0):
                     if is_temp:
                         gma2.send_command("Off " + str(currentFaderPage) + "." + str(flash_index + 1))
@@ -662,6 +655,12 @@ if __name__ == "__main__":
         help="Use Springbeats vMIDI8 for X-Touch in/out instead of OMNICONSOLE.",
     )
     args = parser.parse_args()
+
+    gma2_in = rtmidi2.MidiIn()
+    gma2_in.ignore_types(midi_sysex=False)
+    # Using open_port directly here as in original code, but could also use _open_rtmidi2_port
+    gma2_in.open_port("Springbeats vMIDI4*")   
+    gma2_in.callback = gma2_in_callback
 
     myConsole = Omniconsole(test_mode=args.test_mode)
     # Connexion en tant qu'Administrateur sans mot de passe
