@@ -574,25 +574,19 @@ class Omniconsole:
                 
             if(control == 22):
                 if(value < 64):
-                    if (gobo < 100):
-                        gobo += value
+                    gobo = min(100, gobo + value)
                 else:
-                    if (gobo > 0):
-                        gobo -= (value-64)
+                    gobo = max(0, gobo - (value-64))
                 gma2.send_command("clear") 
                 gma2.send_command("fixture 301 thru 306")                 
                 gma2.send_command("Attribute \"GOBO1\" At " + str(gobo)) 
 
             if(control == 23):
                 if(value < 64):
-                    if (prism < 100):
-                        prism += value
+                    prism = min(100, prism + value)
                 else:
-                    if (prism > 0):
-                        prism -= (value-64)
+                    prism = max(40, prism - (value-64))
                         
-                if(prism < 40):
-                    prism = 40  #below 40, no prism
                 gma2.send_command("clear") 
                 gma2.send_command("fixture 301 thru 306")       
                 gma2.send_command("Attribute \"PRISMA1\" At " + str(prism))
