@@ -8,7 +8,7 @@ import threading
 sys.stdout.reconfigure(encoding='utf-8')  # Pour éviter l'erreur charmap sur Windows
 
 class GrandMA2Telnet:
-    def __init__(self, host="127.0.0.1", port=30000, timeout=2, user="Administrator", password=None, verbose=False):
+    def __init__(self, host="127.0.0.1", port=30000, timeout=2, user="Administrator", password=None, verbose=False, logger=print):
         """ Initialise la connexion socket à GrandMA2 OnPC """
         self.host = host
         self.port = port
@@ -17,6 +17,7 @@ class GrandMA2Telnet:
         self.user = user
         self.password = password
         self.verbose = verbose
+        self.logger = logger
         self._max_reconnect_attempts = 5
         self._reconnect_delay = 1.0
         self.executorList = ""
@@ -31,7 +32,7 @@ class GrandMA2Telnet:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(self.timeout)
             self.socket.connect((self.host, self.port))
-            print(f"✅ Connecté à GrandMA2 OnPC ({self.host}:{self.port})")
+            self.logger(f"✅ Connecté à GrandMA2 OnPC ({self.host}:{self.port})")
 
             # 🔑 Se connecter avec un utilisateur spécifique
             if self.password:
@@ -50,7 +51,7 @@ class GrandMA2Telnet:
 
 
         except Exception as e:
-            print(f"❌ Erreur de connexion : {e}")
+            self.logger(f"❌ Erreur de connexion : {e}")
             return False
         return True
 
@@ -60,7 +61,7 @@ class GrandMA2Telnet:
         
         for attempt in range(1, self._max_reconnect_attempts + 1):
             delay = self._reconnect_delay * attempt
-            print(f"🔄 Tentative de reconnexion {attempt}/{self._max_reconnect_attempts} dans {delay:.1f}s...")
+            self.logger(f"🔄 Tentative de reconnexion {attempt}/{self._max_reconnect_attempts} dans {delay:.1f}s...")
             time.sleep(delay)
             try:
                 if self.socket:
@@ -70,11 +71,11 @@ class GrandMA2Telnet:
                         pass
                     self.socket = None
                 if self.connect():
-                    print(f"✅ Reconnexion réussie (tentative {attempt})")
+                    self.logger(f"✅ Reconnexion réussie (tentative {attempt})")
                     return True
             except Exception as e:
-                print(f"❌ Échec reconnexion tentative {attempt}: {e}")
-        print("❌ Reconnexion impossible après toutes les tentatives.")
+                self.logger(f"❌ Échec reconnexion tentative {attempt}: {e}")
+        self.logger("❌ Reconnexion impossible après toutes les tentatives.")
         return False
         
     def _drain_loop(self):
@@ -144,7 +145,7 @@ class GrandMA2Telnet:
                 execName = self._extract_exec_name(line)
                 execName = execName.removeprefix("Name").removeprefix("=")
                 if self.verbose:
-                    print ("Page " + str(currentPage) + " | ExecId:" + str(execId) + ":" + execName)
+                    self.logger("Page " + str(currentPage) + " | ExecId:" + str(execId) + ":" + execName)
                 self.execIdToName[(currentPage, execId)] = execName
             except:
                 continue
@@ -169,7 +170,7 @@ class GrandMA2Telnet:
                 execName = self._extract_exec_name(line)
                 execName = execName.removeprefix("Name").removeprefix("=")
                 if self.verbose:
-                    print(
+                    self.logger(
                         "Page " + str(currentPage) + " | ExecId:" + str(execId) + ":" + execName
                     )
                 self.execIdToName[(currentPage, execId)] = execName
@@ -179,27 +180,27 @@ class GrandMA2Telnet:
     def send_command(self, command, wait_for_response=False):
         """ Envoie une commande Telnet à GrandMA2, avec reconnexion automatique """
         if not self.socket:
-            print("⚠️ Aucune connexion active à GrandMA2, tentative de reconnexion...")
+            self.logger("⚠️ Aucune connexion active à GrandMA2, tentative de reconnexion...")
             if not self._reconnect():
                 return None
         try:
             return self._send_command_inner(command, wait_for_response)
         except (ConnectionError, OSError, socket.error) as e:
-            print(f"❌ Connexion perdue ({e}), reconnexion...")
+            self.logger(f"❌ Connexion perdue ({e}), reconnexion...")
             if self._reconnect():
                 try:
                     return self._send_command_inner(command, wait_for_response)
                 except Exception as e2:
-                    print(f"❌ Échec après reconnexion : {e2}")
+                    self.logger(f"❌ Échec après reconnexion : {e2}")
             return None
         except Exception as e:
-            print(f"❌ Erreur lors de l'envoi de la commande : {e}")
+            self.logger(f"❌ Erreur lors de l'envoi de la commande : {e}")
             return None
 
     def _send_command_inner(self, command, wait_for_response=False):
         """ Envoie effectivement la commande (sans logique de reconnexion) """
         if self.verbose:
-            print(f"📤 Commande envoyée : {command}")
+            self.logger(f"📤 Commande envoyée : {command}")
             
         with self._socket_lock:
             if wait_for_response:
@@ -243,7 +244,7 @@ class GrandMA2Telnet:
             response = "".join(chunks)
             if response:
                 if("Error" in response):
-                    print("GMA2 ERROR : " + response)
+                    self.logger("GMA2 ERROR : " + response)
                 else:
                     return response
         return None
@@ -255,17 +256,17 @@ class GrandMA2Telnet:
             self._drain_thread.join(timeout=0.2)
         if self.socket:
             self.socket.close()
-            print("🔌 Connexion fermée.")
+            self.logger("🔌 Connexion fermée.")
 
 
     def fetch_all_labels(self):
         """ Récupère tous les labels des 4 pages au démarrage pour éviter de le faire à la volée. """
-        print("⏳ Récupération des noms d'exécuteurs...")
+        self.logger("⏳ Récupération des noms d'exécuteurs...")
         self.execIdToName = {}
         for p in range(1, 5):
             self.list_executor_range(p, 1, 8)
             self.list_executor_range(p, 101, 108)
-        print("✅ Noms d'exécuteurs chargés.")
+        self.logger("✅ Noms d'exécuteurs chargés.")
 
     def updateFaderLabels(self, console, page=1, include_buttons=False):
         for i in range(8):

@@ -1,0 +1,44 @@
+{
+    "gma2": {
+        "host": "127.0.0.1",
+        "port": 30000,
+        "user": "toto",
+        "password": "toto",
+        "artnet_enabled": false,
+        "artnet_universe": 4,
+        "artnet_ip": "255.255.255.255",
+        "midi_out_enabled": true,
+        "midi_out_port": "Springbeats vMIDI6"
+    },
+    "xtouch_rotary_page1": {
+        "32": "Fixture 101 thru 199",
+        "33": "Group 10",
+        "34": "Group 8",
+        "35": "Group 2",
+        "36": "Group 3",
+        "37": "",
+        "38": "Group 1",
+        "39": "Group 6"
+    },
+    "xtouch_rotary_page2": {
+        "32": "",
+        "33": "",
+        "34": "Group 9",
+        "35": "Group 4",
+        "36": "Group 3",
+        "37": "",
+        "38": "Group 1",
+        "39": "Group 6"
+    },
+    "arduino_cc_mapping": {
+        "7": "1.15",
+        "8": "1.16"
+    },
+    "xtouch_buttons_page1": {
+        "16": "Flash"
+    },
+    "xtouch_buttons_page2": {},
+    "xtouch_buttons_page3": {},
+    "xtouch_buttons_page4": {},
+    "test_mode": true
+}
